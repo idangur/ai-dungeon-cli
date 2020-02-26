@@ -5,6 +5,7 @@ import requests
 import textwrap
 import shutil
 import yaml
+from getpass import getpass
 
 
 class FailedConfiguration(Exception):
@@ -18,6 +19,46 @@ class QuitSession(Exception):
 
 # CONFIG
 
+def create_config(cfg_file):
+    """
+    Prompts user if they want to create a config, attempts login, then writes to config file
+
+    TODO: consider asking user where to save config file
+
+    TODO: Don't save password in plaintext in file
+
+    """
+    answer = None
+    while answer not in ["yes", "y", "no", "n"]:
+        answer = input("Would you like to create a config now? [y/n]: ").lower().strip()
+        if answer in ["yes","y"]:
+
+            email, password = get_user_login()
+            auth_token = login(email,password)
+            cfg = {"email":email, "password":password, "auth_token":auth_token,"prompt":"> "}
+            cfg_file_path = os.path.dirname(os.path.realpath(__file__)) + cfg_file
+            try:
+                with open(cfg_file_path, 'w+') as cfg_raw:
+                    yaml.dump(cfg,cfg_raw)
+                    print("wrote to {}".format(cfg_file_path))
+            except IOError:
+                print("Could not open {}".format(cfg_file_path))
+                raise FailedConfiguration
+
+        elif answer in ["no", "n"]:
+            print("OK Quitting...")
+            exit(1)
+        else:
+            print("Please enter yes or no.")
+    return cfg
+
+def get_user_login():
+    """
+    Asks user for their email and 'hidden' password
+    """
+    email = input("What is your email?: ")
+    password =  getpass("What is your password?: ")
+    return [email, password]
 
 def init_configuration_file():
     cfg_file = "/config.yml"
@@ -33,23 +74,66 @@ def init_configuration_file():
             with open(file, 'r') as cfg_raw:
                 cfg = yaml.load(cfg_raw, Loader=yaml.FullLoader)
                 did_read_cfg_file = True
+                break
         except IOError:
             pass
 
     if not did_read_cfg_file:
         print("Missing config file at ", end="")
         print(*cfg_file_paths, sep=", ")
-        exit(1)
-
-    if not ("auth_token" in cfg and cfg["auth_token"]):
-        print("Missing or empty 'auth_token' in config file")
+        cfg = create_config(cfg_file)
+    
+    if cfg is None:
+        print("config file empty or badly formatted")
         raise FailedConfiguration
+
+    auth_token = None
+    if "auth_token" in cfg and cfg["auth_token"]:
+        auth_token = cfg["auth_token"]
+
+    email = None
+    if "email" in cfg and cfg["email"]:
+        email = cfg['email']
+
+    password = None
+    if "password" in cfg and cfg["password"]:
+        password = cfg['password']
 
     prompt = "> "
     if "prompt" in cfg and cfg["prompt"]:
         prompt = cfg["prompt"]
 
-    return cfg["auth_token"], prompt
+    if auth_token is None :
+        if email is not None and password is not None:
+            # there is no auth token but there is an email and password provided
+            auth_token = login(email, password)
+        else:
+            raise FailedConfiguration
+            
+    return auth_token, prompt
+
+
+# FUNCTIONS: AUTH
+
+def login(email, password):
+    """
+    make a request to the users api and attempt to log in
+    if succeeded, save the auth token
+
+    TODO: allow sign up through the cli
+
+    """
+    s = requests.Session()
+    r = s.post("https://api.aidungeon.io/users",
+               json={ 'email': email,
+                      'password': password })
+    resp = r.json()
+    if r.status_code != requests.codes.ok:
+        print("Failed to log in using provided credentials. Check your email and password.")
+        raise FailedConfiguration
+    auth_token = resp['accessToken']
+    print("Got access token: {}".format(auth_token))
+    return auth_token
 
 
 # SYSTEM FUNCTIONS
@@ -268,6 +352,9 @@ def main():
 
     except QuitSession:
         current_run.print_sentences("Bye Bye!")
+    
+    except KeyboardInterrupt:
+        print("Received Keyboard Interrupt. Bye Bye...")
 
     except ConnectionError:
         current_run.print_sentences("Lost connection to the Ai Dungeon servers")
