@@ -33,6 +33,7 @@ def init_configuration_file():
             with open(file, 'r') as cfg_raw:
                 cfg = yaml.load(cfg_raw, Loader=yaml.FullLoader)
                 did_read_cfg_file = True
+                break
         except IOError:
             pass
 
@@ -40,16 +41,51 @@ def init_configuration_file():
         print("Missing config file at ", end="")
         print(*cfg_file_paths, sep=", ")
         exit(1)
-
-    if not ("auth_token" in cfg and cfg["auth_token"]):
-        print("Missing or empty 'auth_token' in config file")
+    
+    if cfg is None:
+        print("config file empty or badly formatted")
         raise FailedConfiguration
+
+    auth_token = None
+    if "auth_token" in cfg and cfg["auth_token"]:
+        auth_token = cfg["auth_token"]
+
+    email = None
+    if "email" in cfg and cfg["email"]:
+        email = cfg['email']
+
+    password = None
+    if "password" in cfg and cfg["password"]:
+        password = cfg['password']
 
     prompt = "> "
     if "prompt" in cfg and cfg["prompt"]:
         prompt = cfg["prompt"]
 
-    return cfg["auth_token"], prompt
+    if auth_token is None :
+        if email is not None and password is not None:
+            # there is no auth token but there is an email and password provided
+            auth_token = login(email, password)
+        else:
+            raise FailedConfiguration
+            
+    return auth_token, prompt
+
+
+# FUNCTIONS: AUTH
+
+def login(email, password):
+    s = requests.Session()
+    r = s.post("https://api.aidungeon.io/users",
+               json={ 'email': email,
+                      'password': password })
+    resp = r.json()
+    if r.status_code != requests.codes.ok:
+        print("Failed to log in using provided credentials. Check your config.")
+        raise FailedConfiguration
+    auth_token = resp['accessToken']
+    print("Got access token: {}".format(auth_token))
+    return auth_token
 
 
 # SYSTEM FUNCTIONS
